@@ -1,0 +1,40 @@
+{
+  "name": "Pooyan Alavi",
+  "education": {
+    "degree": "Master of Science",
+    "major": "Computer Science",
+    "university": "Amirkabir University of Technology",
+    "year": "2023"
+  },
+  "experience": [
+    {
+      "role": "Data Scientist",
+      "company": "DataMind Solutions",
+      "duration": "2022-2024",
+      "responsibilities": [
+        "Developed predictive models using Python and TensorFlow",
+        "Led anomaly detection project on retail dataset"
+      ]
+    },
+    {
+      "role": "Front-End Developer",
+      "company": "TechBridge Studio",
+      "duration": "2020-2021",
+      "responsibilities": [
+        "Built responsive dashboards with React and TypeScript",
+        "Collaborated with data analysts to visualize KPI metrics"
+      ]
+    }
+  ],
+  "skills": ["Python", "TensorFlow", "React", "TypeScript", "SQL", "Docker", "Kubernetes"],
+  "notable_projects": [
+    {
+      "title": "Retail Demand Forecasting",
+      "description": "Implemented CNN-LSTM hybrid for multi-step demand time series prediction"
+    },
+    {
+      "title": "E-commerce Analytics Platform",
+      "description": "Built full-stack product analytics dashboard integrating REST APIs"
+    }
+  ]
+}
