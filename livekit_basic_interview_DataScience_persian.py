@@ -143,10 +143,12 @@ class OnTimeInterviewAgentFA(Agent):
 # ======================================================
 async def entrypoint(ctx: agents.JobContext):
     """راه‌اندازی کامل جلسه‌ی صوتی فارسی."""
+    #alloy, echo, verse   female: coral, sage, marin , cedar   nova, onyx
+    # onyx, marin, alloy, marin, sage
     session = agents.AgentSession(
         stt=openai.STT(model="gpt-4o-mini-transcribe", language="fa"),
         llm=openai.LLM(model=os.getenv("LLM_CHOICE", "gpt-4.1-mini")),
-        tts=openai.TTS(voice="alloy"),
+        tts=openai.TTS(voice="sage"),
         vad=silero.VAD.load(),
     )
 

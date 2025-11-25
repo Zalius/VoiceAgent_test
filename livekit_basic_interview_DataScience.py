@@ -1,99 +1,128 @@
 """
-Enhanced OnTime Interview Assistant
-Structured turn-based voice interview that first asks
-about education, waits for response, and then continues
-with experience and technical questions.
+OnTime Interview Voice Assistant
+================================
+An English-speaking LiveKit voice agent for conducting structured job interviews
+for OnTime Company. Reads the candidate's resume, speaks professionally,
+asks HR and technical questions, saves interview summary, then ends politely.
+
+Requires OpenAI and Deepgram credentials in `.env`.
 """
 
 from dotenv import load_dotenv
 from livekit import agents
-from livekit.agents import Agent
-from livekit.agents.events import * # type: ignore
-from livekit.plugins import openai
+from livekit.agents import Agent, AgentSession, RunContext
+from livekit.agents.llm import function_tool
+from livekit.plugins import openai, deepgram, silero
 from datetime import datetime
 import json
+import os
 
+# ---------------------
+# Environment Setup
+# ---------------------
 load_dotenv(".env")
 
 
 class OnTimeInterviewAgent(Agent):
-    """Turn-based voice interviewer for OnTime Company."""
+    """Professional English-speaking interviewer agent for OnTime Company."""
 
     def __init__(self):
         super().__init__(
-            instructions=(
-                "You are a formal HR interviewer for OnTime Company. "
-                "Speak in a serious, respectful tone. "
-                "Follow structured phases: Greeting → Education → Experience → Technical → Closing."
-            )
+            instructions="""
+You are an HR interviewer for OnTime Company speaking in a serious, clear tone.
+Ask about resume details, recent projects, technical experience, and data-science concepts.
+Keep your style direct, professional, and respectful.
+"""
         )
-        self.state = "GREETING"
+
+        # Candidate example resume data
         self.resume = {
             "name": "Pooyan Alavi",
-            "education": "Master of Science in Computer Science from Amirkabir University of Technology (2022)",
+            "education": {
+                "degree": "Master of Science",
+                "major": "Computer Science",
+                "university": "Amirkabir University of Technology",
+                "year": "2022"
+            },
             "experience": [
-                "Data Scientist at DataMind Solutions (2022–2024)",
-                "Front-End Developer at TechBridge Studio (2020–2021)",
+                {
+                    "role": "Data Scientist",
+                    "company": "DataMind Solutions",
+                    "duration": "2022–2024",
+                    "focus": "Developed predictive models with Python and TensorFlow"
+                },
+                {
+                    "role": "Front-End Developer",
+                    "company": "TechBridge Studio",
+                    "duration": "2020–2021",
+                    "focus": "Built dashboards in React and TypeScript"
+                }
             ],
-            "skills": ["Python", "TensorFlow", "React", "TypeScript", "SQL", "Docker", "Kubernetes"]
+            "skills": [
+                "Python", "TensorFlow", "React", "TypeScript", "SQL", "Docker", "Kubernetes"
+            ]
         }
-        self.user_answers = {}
 
-    async def on_start(self, ctx):
-        """Called once when room connection established."""
-        await ctx.session.say(
-            f"Hello {self.resume['name']}, thank you for joining this interview for OnTime Company. "
-            "Let's begin with your academic background. Could you please tell me about your education?"
+        self.interview_summary = None
+
+    # ---------------------
+    # Conversation Tools
+    # ---------------------
+    @function_tool
+    async def load_resume_summary(self, context: RunContext) -> str:
+        """Return a summary of resume for conversation bootstrapping."""
+        r = self.resume
+        text = (
+            f"Candidate name: {r['name']}. "
+            f"Education: {r['education']['degree']} in {r['education']['major']} "
+            f"from {r['education']['university']} in {r['education']['year']}. "
+            "Key experiences include working as Data Scientist and Front-End Developer. "
+            f"Skills are: {', '.join(r['skills'])}."
         )
-        self.state = "EDUCATION"
+        return text
 
-    async def on_user_spoke(self, ctx, text: str):
-        """Triggered whenever user finishes speaking (STT transcript available)."""
-        if self.state == "EDUCATION":
-            self.user_answers["education"] = text
-            await ctx.session.say(
-                "Excellent. Now let's talk about your work experience. "
-                "Could you describe your experiences across different roles and companies?"
-            )
-            self.state = "EXPERIENCE"
-
-        elif self.state == "EXPERIENCE":
-            self.user_answers["experience"] = text
-            await ctx.session.say(
-                "Thank you. Now let's discuss some technical points. "
-                "Can you explain how RNN and LSTM architectures differ, and what makes CNNs effective for images?"
-            )
-            self.state = "TECH"
-
-        elif self.state == "TECH":
-            self.user_answers["technical"] = text
-            await ctx.session.say(
-                "Thank you for sharing your insights. "
-                "That concludes our interview. We'll review your responses and contact you soon. Goodbye."
-            )
-            await self.save_summary()
-            self.state = "CLOSE"
-
-    async def save_summary(self):
+    @function_tool
+    async def save_interview_summary(self, context: RunContext, notes: str) -> str:
+        """Store interview notes/summary on disk."""
         summary = {
             "candidate": self.resume["name"],
-            "timestamp": datetime.now().isoformat(),
-            "answers": self.user_answers,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "skills": self.resume["skills"],
+            "notes": notes,
+            "result": "pending"
         }
         with open("pooyan_alavi_interview_summary.json", "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=4)
+        self.interview_summary = summary
+        return "Interview summary saved successfully."
 
 
-# ------------------- ENTRYPOINT -------------------
-
-async def entrypoint(ctx):
-    session = agents.AgentSession(
-        stt=openai.STT(model="gpt-4o-mini-transcribe", language="en"),
-        llm=openai.LLM(model="gpt-4.1-mini"),
-        tts=openai.TTS(voice="verse"),
+# ---------------------
+# LiveKit Entrypoint
+# ---------------------
+async def entrypoint(ctx: agents.JobContext):
+    """Initialize the OnTime interview voice agent."""
+    session = AgentSession(
+        stt=deepgram.STT(model="nova-2"),  # English real-time streaming
+        llm=openai.LLM(model=os.getenv("LLM_CHOICE", "gpt-4.1-mini")),
+        tts=openai.TTS(voice="verse"),     # serious male voice
+        vad=silero.VAD.load(),
     )
+
+    # Launch the voice I/O session (this activates mic & speaker)
     await session.start(room=ctx.room, agent=OnTimeInterviewAgent())
 
+    # Start interview greetings via TTS
+    await session.generate_reply(
+        instructions=(
+            "Greet Pooyan Alavi politely. Then begin with: "
+            "'Tell me about your experiences across different roles and companies.'"
+        )
+    )
 
+
+# ---------------------
+# Run as LiveKit Worker
+# ---------------------
 if __name__ == "__main__":
     agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))

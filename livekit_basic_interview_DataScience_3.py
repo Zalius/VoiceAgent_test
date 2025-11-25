@@ -167,3 +167,17 @@ async def entrypoint(ctx: agents.JobContext):
 # ======================================================
 if __name__ == "__main__":
     agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
+
+
+
+# TeamWork
+# conflicts
+# communications
+# list of (like 10) general questions
+# The companies need - selective options (cost, efficiency, loyality, hardwork, talent,...)
+# compatibility with env/team
+# dedication
+# soft skills/--> 
+# agent -  
+# colquit? behavior performance?! --> "soft skill" section
+# 
