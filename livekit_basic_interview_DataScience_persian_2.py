@@ -15,7 +15,9 @@ import aiofiles
 from livekit import agents
 from livekit.agents import Agent
 from livekit.plugins import silero, openai
-from livekit.agents.tts import ChunkedStream
+from livekit.agents.tts import TTS, ChunkedStream, TTSCapabilities
+import requests, tempfile, aiofiles
+
 
 
 # ---------------------- ENV ----------------------
@@ -26,103 +28,52 @@ AVASHO_TOKEN = os.getenv("AVASHO_GATEWAY_TOKEN")
 # ======================================================
 # کلاس کوچک Avasho TTS جایگزین openai.TTS
 # ======================================================
-class AvashoTTS:
-    API_URL = "https://partai.gw.isahab.ir/avasho/v2/avasho/request"
+class AvashoTTSProxy(TTS):
+    """TTS adapter for Avasho FastAPI proxy — compat with older LiveKit Agents SDK."""
 
-    def __init__(self, speaker="shahrzad", speed=1.0, timestamp=True):
+    def __init__(self, server_url="http://37.32.26.165:8000/tts", speaker="shahrzad", speed=1.0):
+        self.server_url = server_url
         self.speaker = speaker
         self.speed = speed
-        self.timestamp = timestamp
-        self.token = os.getenv("AVASHO_GATEWAY_TOKEN")
-        self.format = "mp3"
-        self.sample_rate = 24000
-        self.num_channels = 1
-        self.capabilities = SimpleNamespace(streaming=False, format=self.format)
-        self._event_handlers = {}
+        self._format = "mp3"
 
-    def on(self, event_name: str):
-        def decorator(handler_func):
-            self._event_handlers.setdefault(event_name, []).append(handler_func)
-            return handler_func
-        return decorator
-
-    def emit(self, event_name: str, *args, **kwargs):
-        for handler in self._event_handlers.get(event_name, []):
-            try:
-                handler(*args, **kwargs)
-            except Exception:
-                pass
+        capabilities = TTSCapabilities(streaming=False)
+        super().__init__(capabilities=capabilities, sample_rate=24000, num_channels=1)
 
     def synthesize(self, text: str, rate: float = 1.0, **kwargs):
-        headers = {
-            "gateway-token": self.token,
-            "accept": "application/json",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "text": text,
-            "speaker": self.speaker,
-            "speed": self.speed,
-            "timestamp": self.timestamp,
-        }
-        outer = self
+        payload = {"text": text, "speaker": self.speaker, "speed": self.speed, "timestamp": True}
 
         class SynthContext:
-            def __init__(self):
-                self._tmp_file = None
+            def __init__(self, outer):
+                self.outer = outer
+                self.tmpfile = None
 
             async def __aenter__(self):
-                try:
-                    resp = requests.post(
-                        outer.API_URL, headers=headers, data=json.dumps(payload)
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-                    audio_url = (
-                        data.get("data", {})
-                            .get("data", {})
-                            .get("aiResponse", {})
-                            .get("result", {})
-                            .get("filename")
-                    )
-                    if not audio_url:
-                        print("⚠️ Avasho response missing filename URL:", data)
-                        return self
+                resp = requests.post(self.outer.server_url, json=payload, stream=True)
+                resp.raise_for_status()
+                self.tmpfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+                for chunk in resp.iter_content(chunk_size=8192):
+                    self.tmpfile.write(chunk)
+                self.tmpfile.flush()
+                return self
 
-                    audio_data = requests.get(audio_url)
-                    audio_data.raise_for_status()
-                    self._tmp_file = tempfile.NamedTemporaryFile(
-                        delete=False, suffix=".mp3"
-                    )
-                    async with aiofiles.open(self._tmp_file.name, "wb") as f:
-                        await f.write(audio_data.content)
-
-                    outer.emit("metrics_collected", {"bytes": len(audio_data.content)})
-                    return self  # LiveKit uses `async for` on this context
-                except Exception as e:
-                    print("🚫 AvashoTTS synthesis failed:", e)
-                    return self  # still return self so `async for` finds empty iterator
-
-            async def __aexit__(self, exc_type, exc, tb):
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
                 pass
 
             def __aiter__(self):
                 return self._aiter()
 
             async def _aiter(self):
-                if not self._tmp_file:
-                    return
-                async with aiofiles.open(self._tmp_file.name, "rb") as f:
+                async with aiofiles.open(self.tmpfile.name, "rb") as f:
                     audio_bytes = await f.read()
                     yield ChunkedStream.Chunk(
                         audio=audio_bytes,
-                        sample_rate=outer.sample_rate,
-                        num_channels=outer.num_channels,
-                        format=outer.format,
+                        sample_rate=self.outer.sample_rate,
+                        num_channels=self.outer.num_channels,
+                        format=self.outer._format,
                     )
 
-        return SynthContext()
-
+        return SynthContext(self)
 
 # ======================================================
 # کلاس اصلی عامل مصاحبه (بدون تغییر در منطق)
@@ -236,7 +187,7 @@ async def entrypoint(ctx: agents.JobContext):
     session = agents.AgentSession(
         stt=openai.STT(model="gpt-4o-mini-transcribe", language="fa"),
         llm=openai.LLM(model=os.getenv("LLM_CHOICE", "gpt-4.1-mini")),
-        tts=AvashoTTS(speaker="shahrzad", speed=1.0),  # 🟢 جایگزین TTS آواشو
+        tts=AvashoTTSProxy(speaker="shahrzad", speed=1.0),  # 🟢 جایگزین TTS آواشو
         vad=silero.VAD.load(),
     )
     await session.start(room=ctx.room, agent=OnTimeInterviewAgentFA())
